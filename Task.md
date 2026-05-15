@@ -13,7 +13,7 @@ Custom corpus (e.g., Wikipedia pages, internal documents, or any knowledge base)
 
 - Use LangChain or Retrieval-Augmented Generation (RAG)
 - Implement context memory for conversational history
-- Retrieve answers from a vectorized document store
+- Retrieve answers from a vectorized document store (ChromaB)
 - Deploy the chatbot with Streamlit
 
 ## Skills Gained
