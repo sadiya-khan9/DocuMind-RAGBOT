@@ -1,6 +1,6 @@
 import os
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 def load_documents(directory):
@@ -11,8 +11,12 @@ def load_documents(directory):
             loader = PyPDFLoader(filepath)
             documents.extend(loader.load())
         elif filename.endswith('.txt'):
-            loader = TextLoader(filepath)
-            documents.extend(loader.load())
+            try:
+                loader = TextLoader(filepath, encoding='utf-8')
+                documents.extend(loader.load())
+            except Exception:
+                loader = TextLoader(filepath, encoding='latin-1')
+                documents.extend(loader.load())
     return documents
 
 

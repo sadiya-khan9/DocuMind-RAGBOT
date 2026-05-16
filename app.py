@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 from document_processor import load_documents, chunk_documents
 from vector_store import create_vector_store, load_vector_store
 from rag_chain import create_rag_chain
-from langchain_core.messages import HumanMessage, AIMessage
 
 load_dotenv()
 
@@ -57,14 +56,7 @@ if prompt := st.chat_input("Ask a question..."):
 
     with st.chat_message("assistant"):
         if st.session_state.rag_chain:
-            chat_history_messages = []
-            for msg in st.session_state.chat_history:
-                if msg["role"] == "user":
-                    chat_history_messages.append(HumanMessage(content=msg["content"]))
-                else:
-                    chat_history_messages.append(AIMessage(content=msg["content"]))
-
-            response = st.session_state.rag_chain.invoke({
+            response = st.session_state.rag_chain({
                 "input": prompt,
                 "chat_history": st.session_state.chat_history,
             })
