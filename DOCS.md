@@ -41,7 +41,7 @@ Think of it like giving a smart assistant a library of documents to reference be
 
 - You give it a prompt (text input), it gives you a response (text output).
 - It's trained on massive amounts of internet text, so it knows a lot — but it **doesn't know your private documents** unless you show them to it.
-- This project uses **Google Gemini** as the LLM.
+- This project uses **Google Gemini 2.5 Flash** as the LLM.
 
 ```python
 # Simple example of using an LLM (conceptual):
@@ -78,7 +78,7 @@ embedding("I like canines")    → [0.11, -0.43, 0.76, ...]  ← similar!
 embedding("Stock market crash") → [0.89, 0.34, -0.12, ...]  ← very different
 ```
 
-We use **Google's embedding model** to convert text into these number vectors.
+This project uses a **local BGE embedding model** (`BAAI/bge-small-en-v1.5`) saved in `./local_bge_model/`. It runs entirely on your machine — no API calls needed for embeddings. The model is loaded via `sentence-transformers` and integrated through LangChain's `HuggingFaceEmbeddings`.
 
 ### What is a Vector Database?
 
@@ -115,13 +115,6 @@ results = vector_store.search("What makes good companions?")
 
 Without LangChain, you'd write hundreds of lines of glue code. With it, you compose building blocks.
 
-```python
-# Without LangChain: you'd manually handle embeddings, vector search, prompt building, API calls...
-# With LangChain:
-chain = create_retrieval_chain(retriever, question_answer_chain)
-result = chain.invoke({"input": "What are dogs?"})
-```
-
 ### What is Context Memory?
 
 **Context memory** means the chatbot remembers what was said earlier in the conversation.
@@ -142,7 +135,9 @@ User: What about its second feature?
 Bot: Python's second key feature is its extensive standard library... (remembers the context!)
 ```
 
-This project implements context memory by sending the full conversation history to the LLM with each new question, so it understands references like "it", "that", "the second point", etc.
+This project implements context memory in two stages:
+1. **Question reformulation**: Before searching the vector store, the LLM rewrites the user's question using chat history to resolve references like "it", "that", "the second point".
+2. **Answer generation**: The full conversation history is sent to the LLM along with retrieved context, so it understands the ongoing discussion.
 
 ---
 
@@ -164,7 +159,7 @@ This project implements context memory by sending the full conversation history 
 └──────────────────────────┬──────────────────────────────────┘
                            │
                      vector_store.py
-                  (converts to embeddings
+           (converts to embeddings using local BGE model
                    and stores in ChromaDB)
                            │
                            ▼
@@ -174,12 +169,13 @@ This project implements context memory by sending the full conversation history 
 └──────────────────────────┬──────────────────────────────────┘
                            │
                       rag_chain.py
-              (finds relevant chunks + asks Gemini)
+        (reformulates question using history,
+         finds relevant chunks, asks Gemini 2.5 Flash)
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    Gemini 2.0 Flash                          │
-│                   (the AI brain)                             │
+│                  Gemini 2.5 Flash                            │
+│                   (the AI brain — via API)                   │
 └──────────────────────────┬──────────────────────────────────┘
                            │
                           app.py
@@ -199,20 +195,23 @@ This project implements context memory by sending the full conversation history 
 ```
 context-aware-chatbot-using-RAG/
 │
-├── app.py                    # Streamlit web interface (the UI)
-├── document_processor.py     # Loads documents and splits them into chunks
-├── vector_store.py           # Creates/loads the ChromaDB vector database
-├── rag_chain.py              # Builds the RAG pipeline (retrieval + LLM)
-├── requirements.txt          # Python dependencies
-├── README.md                 # Quick start guide
-├── DOCS.md                   # This file — detailed developer guide
+├── app.py                        # Streamlit web interface (the UI)
+├── document_processor.py         # Loads documents and splits them into chunks
+├── vector_store.py               # Creates/loads the ChromaDB vector database
+├── rag_chain.py                  # Builds the RAG pipeline (retrieval + LLM)
+├── saving_embedding_model.py     # Script to download & save the BGE model locally
+├── requirements.txt              # Python dependencies
+├── README.md                     # Quick start guide
+├── DOCS.md                       # This file — detailed developer guide
 │
-├── knowledge_base/           # Put your PDF/TXT documents here
-│   └── machine_learning_intro.txt   # Sample document included
+├── knowledge_base/               # Put your PDF/TXT documents here
+│   └── machine_learning_intro.txt       # Sample document included
 │
-├── chroma_db/                # Auto-generated vector database (created on first run)
+├── local_bge_model/              # Locally saved BGE embedding model (no API needed)
 │
-└── .env                      # Your Google API key (create this yourself)
+├── chroma_db/                    # Auto-generated vector database (created on first run)
+│
+└── .env                          # Your Google API key (create this yourself)
 ```
 
 ---
@@ -227,7 +226,7 @@ context-aware-chatbot-using-RAG/
 
 1. **`load_documents(directory)`** — Scans a folder for `.pdf` and `.txt` files and reads their contents.
    - Uses `PyPDFLoader` for PDFs (extracts text from each page)
-   - Uses `TextLoader` for plain text files
+   - Uses `TextLoader` for plain text files with UTF-8 encoding (falls back to latin-1 for files with special characters)
    - Returns a list of Document objects (each has `.page_content` and `.metadata`)
 
 2. **`chunk_documents(documents)`** — Splits large documents into smaller pieces.
@@ -235,28 +234,37 @@ context-aware-chatbot-using-RAG/
    - Uses `RecursiveCharacterTextSplitter` which splits on natural boundaries (paragraphs → sentences → words)
    - `chunk_overlap=200` means adjacent chunks share 200 characters of overlap, so context isn't lost at boundaries
 
-```python
-# What happens internally:
-# A 5000-word document becomes ~50 chunks of ~1000 characters each
-# Each chunk is stored separately so we can retrieve only the relevant ones
-```
-
 ### `vector_store.py`
 
-**Purpose**: Convert text chunks into embeddings and store them in ChromaDB.
+**Purpose**: Convert text chunks into embeddings using a local BGE model and store them in ChromaDB.
 
 **Two functions:**
 
-1. **`create_vector_store(documents)`** — Takes document chunks, converts each to an embedding using Google's embedding model, and saves them to ChromaDB on disk.
+1. **`create_vector_store(documents)`** — Takes document chunks, converts each to an embedding using the locally saved BGE model (`BAAI/bge-small-en-v1.5`), and saves them to ChromaDB on disk.
 
 2. **`load_vector_store()`** — Loads an existing ChromaDB database from disk (so you don't need to re-process documents every time).
 
+The embedding model runs **entirely locally** — no API calls or internet needed for this step. It uses `HuggingFaceEmbeddings` from `langchain-huggingface`, which wraps `sentence-transformers` under the hood.
+
 ```python
 # What happens internally:
-# "Dogs are loyal" → embedding model → [0.12, -0.45, 0.78, ...] → stored in ChromaDB
-# "Cats are independent" → embedding model → [0.55, 0.22, -0.33, ...] → stored in ChromaDB
+# "Dogs are loyal" → local BGE model → [0.12, -0.45, 0.78, ...] → stored in ChromaDB
+# "Cats are independent" → local BGE model → [0.55, 0.22, -0.33, ...] → stored in ChromaDB
 # When you search "good pets", ChromaDB finds the closest embedding match
 ```
+
+### `saving_embedding_model.py`
+
+**Purpose**: A one-time utility script that downloads the BGE embedding model from Hugging Face and saves it locally.
+
+```python
+from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer("BAAI/bge-small-en-v1.5")
+model.save("./local_bge_model")
+```
+
+Run this once to create the `local_bge_model/` folder. After that, `vector_store.py` loads from this local folder — no download needed.
 
 ### `rag_chain.py`
 
@@ -264,11 +272,11 @@ context-aware-chatbot-using-RAG/
 
 **What it does step by step:**
 
-1. **Creates the LLM** — Initializes Google Gemini 2.0 Flash as the language model.
+1. **Creates the LLM** — Initializes Google Gemini 2.5 Flash as the language model.
 
 2. **Creates the retriever** — Wraps the vector store so it can find the top 3 most relevant document chunks for any query.
 
-3. **Creates a context-aware retriever** — This is the clever part. Before searching, it reformulates the user's question using conversation history. If you say "tell me more about that", it figures out what "that" refers to before searching.
+3. **Creates a context-aware question reformulator** — Before searching, it uses the LLM to rewrite the user's question using conversation history. If you say "tell me more about that", it figures out what "that" refers to before searching.
 
 4. **Creates the question-answer chain** — Builds a prompt template that combines:
    - System instructions ("You are a helpful assistant...")
@@ -276,7 +284,7 @@ context-aware-chatbot-using-RAG/
    - Conversation history
    - The user's question
 
-5. **Combines everything** into a single `rag_chain` that you can call with `chain.invoke({"input": "question", "chat_history": [...]})`.
+5. **Combines everything** into a `retrieve_and_answer` function that you can call with `chain({"input": "question", "chat_history": [...]})`.
 
 ```python
 # The prompt that goes to Gemini looks like this:
@@ -329,16 +337,19 @@ Step 2: app.py adds this to chat_history
         ↓
 Step 3: rag_chain receives the question + chat_history
         ↓
-Step 4: The context-aware retriever reformulates the question
-        (if needed, using chat history for context)
+Step 4: If there's chat history, the LLM reformulates the question
+        to resolve references (e.g., "tell me more about that"
+        becomes "tell me more about machine learning types")
         ↓
 Step 5: The reformulated question is converted to an embedding
+        using the local BGE model (no API call)
         ↓
 Step 6: ChromaDB searches for the 3 most similar document chunks
         ↓
 Step 7: These chunks are inserted into the prompt as "context"
         ↓
-Step 8: The full prompt (system + context + history + question) is sent to Gemini
+Step 8: The full prompt (system + context + history + question)
+        is sent to Gemini 2.5 Flash via API
         ↓
 Step 9: Gemini generates an answer based on the provided context
         ↓
@@ -359,23 +370,30 @@ Step 10: The answer is displayed to the user and saved to chat_history
 1. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
+   pip install langchain-huggingface sentence-transformers
    ```
 
-2. **Create a `.env` file** in the project root:
+2. **Download the local embedding model** (one-time):
+   ```bash
+   python saving_embedding_model.py
+   ```
+   This creates the `local_bge_model/` folder. After this, embeddings run entirely offline.
+
+3. **Create a `.env` file** in the project root:
    ```
    GOOGLE_API_KEY=your_actual_api_key_here
    ```
 
-3. **Add documents** to the `knowledge_base/` folder:
+4. **Add documents** to the `knowledge_base/` folder:
    - Supported formats: `.pdf`, `.txt`
    - Add as many as you want
 
-4. **Run the app:**
+5. **Run the app:**
    ```bash
    streamlit run app.py
    ```
 
-5. **Open your browser** to the URL shown in the terminal (usually `http://localhost:8501`)
+6. **Open your browser** to the URL shown in the terminal (usually `http://localhost:8501`)
 
 ---
 
@@ -389,7 +407,7 @@ Step 10: The answer is displayed to the user and saved to chat_history
 
 **Tips:**
 - Text files work best (PDFs can have formatting issues)
-- Documents should be in a language the embedding model supports (English works best)
+- Documents should be in English (the BGE model is optimized for English)
 - Larger documents are automatically split into chunks — you don't need to split them manually
 
 ---
@@ -402,7 +420,7 @@ In `rag_chain.py`, modify the model name:
 
 ```python
 llm = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash",   # Change to another Gemini model
+    model="gemini-2.5-flash",   # Change to another Gemini model
     ...
 )
 ```
@@ -428,26 +446,28 @@ retriever = vector_store.as_retriever(search_kwargs={"k": 3})
 
 ### Change the system prompt
 
-In `rag_chain.py`, edit the `qa_system_prompt`:
+In `rag_chain.py`, edit the `qa_prompt`:
 
 ```python
-qa_system_prompt = (
-    "You are a helpful AI assistant. Use the following retrieved context "
-    "to answer the user's question. If you don't know the answer, say so. "
-    "Keep answers concise and helpful.\n\n"
-    "{context}"
-)
-# Modify the instructions to change the bot's behavior
+qa_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful AI assistant. Use the following retrieved context to answer the user's question. If you don't know the answer, say so. Keep answers concise and helpful.\n\n{context}"),
+    MessagesPlaceholder("chat_history"),
+    ("human", "{input}"),
+])
+# Modify the system instructions to change the bot's behavior
 ```
 
-### Use a different embedding model
+### Use a different local embedding model
 
-In `vector_store.py`, change the embedding model:
+1. Edit `saving_embedding_model.py` with a different model name:
+   ```python
+   model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+   model.save("./local_bge_model")
+   ```
 
-```python
-embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-# Other options: "models/text-embedding-004"
-```
+2. Run the script again to download and save the new model.
+
+3. Delete `chroma_db/` and restart the app to re-embed with the new model.
 
 ---
 
@@ -463,10 +483,17 @@ embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 - Only `.pdf` and `.txt` files are supported
 - Click "Rebuild Vector Store" in the sidebar
 
-### Slow responses
-- Large documents take longer to process initially (one-time cost)
-- After the vector store is built, responses should be fast
-- Try reducing `chunk_size` or `k` (number of retrieved chunks)
+### "429 RESOURCE_EXHAUSTED" (Google API quota exceeded)
+- You've hit the free tier limit. Wait a minute and try again, or check your usage at [ai.google.dev/rate-limit](https://ai.google.dev/rate-limit)
+- Embeddings still work offline — only the LLM answer generation needs the API
+
+### "local_bge_model not found"
+- Run `python saving_embedding_model.py` to download the embedding model
+- Make sure the `local_bge_model/` folder exists in the project root
+
+### Slow first response
+- The local BGE model loads into memory on first use — this takes a few seconds
+- Subsequent searches are much faster
 
 ### Incorrect answers
 - Make sure your documents actually contain the information being asked about
@@ -474,5 +501,5 @@ embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 - Check that documents are readable (PDFs with images/scans won't work — they need selectable text)
 
 ### Import errors
-- Run `pip install -r requirements.txt` to ensure all packages are installed
+- Run `pip install -r requirements.txt` and `pip install langchain-huggingface sentence-transformers`
 - Make sure you're using Python 3.10 or higher
