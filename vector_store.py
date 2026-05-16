@@ -4,7 +4,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 
 def create_vector_store(documents, persist_directory="./chroma_db"):
     embeddings = HuggingFaceEmbeddings(
-        model_name="BAAI/bge-small-en-v1.5",
+        model_name="./local_bge_model",  # Use the locally saved BGE model
         model_kwargs={"device": "cpu"},  # Use 'cuda' if you have a GPU
         encode_kwargs={"normalize_embeddings": True},  # Crucial for BGE accuracy
     )
@@ -18,7 +18,7 @@ def create_vector_store(documents, persist_directory="./chroma_db"):
 
 def load_vector_store(persist_directory="./chroma_db"):
     embeddings = HuggingFaceEmbeddings(
-        model_name="BAAI/bge-small-en-v1.5",
+        model_name="./local_bge_model",  # Use the locally saved BGE model
         model_kwargs={"device": "cpu"},  # Use 'cuda' if you have a GPU
         encode_kwargs={"normalize_embeddings": True},  # Crucial for BGE accuracy
     )
