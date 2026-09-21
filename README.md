@@ -60,4 +60,3 @@ A conversational chatbot that remembers context and retrieves external informati
 3. When you ask a question, the chatbot finds the most relevant chunks and sends them to **Gemini 2.5 Flash** along with your conversation history
 4. Gemini generates an answer based on your documents
 
-See [DOCS.md](DOCS.md) for a detailed developer guide.
